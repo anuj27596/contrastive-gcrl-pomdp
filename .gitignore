@@ -1,4 +1,5 @@
 __pycache__/
+exp/
 dist/
 *.py[cod]
 *$py.class
