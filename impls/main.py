@@ -11,7 +11,7 @@ import wandb
 from absl import app, flags
 from agents import agents
 from ml_collections import config_flags
-from utils.datasets import Dataset, GCDataset, HGCDataset
+from utils.datasets import Dataset, GCDataset, HGCDataset, GCPODataset
 from utils.env_utils import make_env_and_datasets
 from utils.evaluation import evaluate
 from utils.flax_utils import restore_agent, save_agent
@@ -45,7 +45,7 @@ config_flags.DEFINE_config_file('agent', 'agents/gciql.py', lock_config=False)
 def main(_):
     # Set up logger.
     exp_name = get_exp_name(FLAGS.seed)
-    setup_wandb(project='OGBench', group=FLAGS.run_group, name=exp_name)
+    setup_wandb(project='OGPOBench', group=FLAGS.run_group, name=exp_name)
 
     FLAGS.save_dir = os.path.join(FLAGS.save_dir, wandb.run.project, FLAGS.run_group, exp_name)
     os.makedirs(FLAGS.save_dir, exist_ok=True)
@@ -60,6 +60,7 @@ def main(_):
     dataset_class = {
         'GCDataset': GCDataset,
         'HGCDataset': HGCDataset,
+        'GCPODataset': GCPODataset,
     }[config['dataset_class']]
     train_dataset = dataset_class(Dataset.create(**train_dataset), config)
     if val_dataset is not None:

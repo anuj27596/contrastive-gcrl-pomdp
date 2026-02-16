@@ -398,3 +398,128 @@ class HGCDataset(GCDataset):
                 )
 
         return batch
+
+
+@dataclasses.dataclass
+class GCPODataset(GCDataset):
+    """Dataset class for goal-conditioned partially observable RL.
+
+    This class provides a method to sample a batch of histories with goals (value_goals and actor_goals) from the
+    dataset. The goals are sampled from the current state, future states in the same trajectory, and random states.
+    It also supports random-cropping image augmentation.
+
+    It reads the following keys from the config:
+    - discount: Discount factor for geometric sampling.
+    - value_p_curgoal: Probability of using the current state as the value goal.
+    - value_p_trajgoal: Probability of using a future state in the same trajectory as the value goal.
+    - value_p_randomgoal: Probability of using a random state as the value goal.
+    - value_geom_sample: Whether to use geometric sampling for future value goals.
+    - actor_p_curgoal: Probability of using the current state as the actor goal.
+    - actor_p_trajgoal: Probability of using a future state in the same trajectory as the actor goal.
+    - actor_p_randomgoal: Probability of using a random state as the actor goal.
+    - actor_geom_sample: Whether to use geometric sampling for future actor goals.
+    - gc_negative: Whether to use '0 if s == g else -1' (True) or '1 if s == g else 0' (False) as the reward.
+    - p_aug: Probability of applying image augmentation.
+    - context_length: Length of sampled histories.
+    - context_warmup: Number of initial time steps in a history to skip sampling goals.
+
+    Attributes:
+        dataset: Dataset object.
+        config: Configuration dictionary.
+        preprocess_frame_stack: Whether to preprocess frame stacks. If False, frame stacks are computed on-the-fly. This
+            saves memory but may slow down training.
+    """
+
+    dataset: Dataset
+    config: Any
+    preprocess_frame_stack: bool = True
+
+    def __post_init__(self):
+        self.size = self.dataset.size
+
+        # Pre-compute trajectory boundaries.
+        (self.terminal_locs,) = np.nonzero(self.dataset['terminals'] > 0)
+        self.initial_locs = np.concatenate([[0], self.terminal_locs[:-1] + 1])
+        assert self.terminal_locs[-1] == self.size - 1
+
+        # Restrict sampling idxs to avoid zero padding beyond context_warmup
+        # Remove first few idxs from start of trajectories
+        self.post_warmup_length = self.config['context_length'] - self.config['context_warmup']
+        self.po_valid_idxs, = np.where(np.convolve(self.dataset['terminals'], np.ones(self.post_warmup_length)) == 0)
+        # Remove first few idxs from start of first trajectory separately
+        self.po_valid_idxs = self.po_valid_idxs[(self.post_warmup_length - 1):]
+
+        # Assert probabilities sum to 1.
+        assert np.isclose(
+            self.config['value_p_curgoal'] + self.config['value_p_trajgoal'] + self.config['value_p_randomgoal'], 1.0
+        )
+        assert np.isclose(
+            self.config['actor_p_curgoal'] + self.config['actor_p_trajgoal'] + self.config['actor_p_randomgoal'], 1.0
+        )
+
+    def sample(self, batch_size, idxs=None, evaluation=False):
+        """Sample a batch of histories with goals.
+
+        This method samples a batch of histories with goals (value_goals and actor_goals) from the dataset. They are
+        stored in the keys 'value_goals' and 'actor_goals', respectively. It also computes the 'rewards' and 'masks'
+        based on the indices of the goals.
+
+        Args:
+            batch_size: Batch size.
+            idxs: Indices of the histories (end step) to sample. If None, random indices are sampled.
+            evaluation: Whether to sample for evaluation. If True, image augmentation is not applied.
+        """
+        if idxs is None:
+            # Sample random idxs
+            idxs = self.po_valid_idxs[np.random.randint(len(self.po_valid_idxs), size=batch_size)]
+
+        # Find corresponding episode start idxs
+        initial_state_idxs = self.initial_locs[np.searchsorted(self.initial_locs, idxs, side='right') - 1]
+        
+        # Augment for history sampling
+        idxs = np.expand_dims(idxs, axis=1) + np.arange(1 - self.config['context_length'], 1)
+
+        # Zero mask for sequence padding
+        sequence_padding_mask = idxs >= np.expand_dims(initial_state_idxs, axis=1)
+
+        # Select histories and mask for padding
+        batch = jax.tree_util.tree_map(lambda arr: arr[idxs] * np.expand_dims(sequence_padding_mask, axis=tuple(range(2, arr.ndim + 1))), self.dataset._dict)
+
+        # Idxs for sampling goals after warmup
+        post_warmup_idxs = idxs[:, self.config['context_warmup']:]
+
+        value_goal_idxs = self.sample_goals(
+            post_warmup_idxs,
+            self.config['value_p_curgoal'],
+            self.config['value_p_trajgoal'],
+            self.config['value_p_randomgoal'],
+            self.config['value_geom_sample'],
+        ).reshape(batch_size, self.post_warmup_length)
+        actor_goal_idxs = self.sample_goals(
+            post_warmup_idxs,
+            self.config['actor_p_curgoal'],
+            self.config['actor_p_trajgoal'],
+            self.config['actor_p_randomgoal'],
+            self.config['actor_geom_sample'],
+        ).reshape(batch_size, self.post_warmup_length)
+
+        batch['value_goals'] = self.get_observations(value_goal_idxs)
+        batch['actor_goals'] = self.get_observations(actor_goal_idxs)
+        successes = (post_warmup_idxs == value_goal_idxs).astype(float)
+        batch['masks'] = 1.0 - successes
+        batch['rewards'] = successes - (1.0 if self.config['gc_negative'] else 0.0)
+
+        if self.config['p_aug'] is not None and not evaluation:
+            if np.random.rand() < self.config['p_aug']:
+                self.augment(batch, ['observations', 'next_observations', 'value_goals', 'actor_goals'])
+
+        return batch
+
+    def sample_goals(self, idxs, p_curgoal, p_trajgoal, p_randomgoal, geom_sample):
+        """Sample goals for the given indices."""
+        goal_idxs = super().sample_goals(idxs.flatten(), p_curgoal, p_trajgoal, p_randomgoal, geom_sample)
+        return goal_idxs.reshape(idxs.shape)
+
+    def get_observations(self, idxs):
+        """Return the observations for the given indices."""
+        return jax.tree_util.tree_map(lambda arr: arr[idxs], self.dataset['observations'])

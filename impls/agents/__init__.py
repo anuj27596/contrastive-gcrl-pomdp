@@ -5,6 +5,7 @@ from agents.gcivl import GCIVLAgent
 from agents.hiql import HIQLAgent
 from agents.qrl import QRLAgent
 from agents.sac import SACAgent
+from agents.nm_crl import NonMarkovianCRLAgent
 
 agents = dict(
     crl=CRLAgent,
@@ -14,4 +15,5 @@ agents = dict(
     hiql=HIQLAgent,
     qrl=QRLAgent,
     sac=SACAgent,
+    nm_crl=NonMarkovianCRLAgent,
 )

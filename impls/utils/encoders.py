@@ -2,9 +2,11 @@ import functools
 from typing import Sequence
 
 import flax.linen as nn
+import jax
 import jax.numpy as jnp
+import numpy as np
 
-from utils.networks import MLP
+from utils.networks import MLP, Identity
 
 
 class ResnetStack(nn.Module):
@@ -100,6 +102,41 @@ class ImpalaEncoder(nn.Module):
         return out
 
 
+class GRUEncoder(nn.Module):
+    """GRU encoder."""
+
+    # num_blocks: int = 1
+    features: int = 512
+    mlp_hidden_dims: Sequence[int] = (512,)
+    layer_norm: bool = False
+
+    def setup(self):
+        self.preprocessor = MLP(self.mlp_hidden_dims, activate_final=True, layer_norm=self.layer_norm)
+        ScanGRU = nn.scan(
+            nn.GRUCell, variable_broadcast="params",
+            split_rngs={"params": False}, in_axes=1, out_axes=1)
+        self.gru = ScanGRU(self.features)
+        self.hold_memory = False
+        self.carry_memory = None
+
+    def reset_memory(self, hold):
+        self.hold_memory = hold
+        self.carry_memory = None
+
+    @nn.compact
+    def __call__(self, x):
+        x = self.preprocessor(x)
+        input_shape =  x[:, 0].shape
+        if self.hold_memory and self.carry_memory is not None:
+            carry = self.carry_memory
+        else:
+            carry = self.gru.initialize_carry(jax.random.PRNGKey(np.random.randint(0, 2**32)), input_shape)
+        carry, x = self.gru(carry, x)
+        if self.hold_memory:
+            self.carry_memory = carry
+        return x
+
+
 class GCEncoder(nn.Module):
     """Helper module to handle inputs to goal-conditioned networks.
 
@@ -141,4 +178,6 @@ encoder_modules = {
     'impala_debug': functools.partial(ImpalaEncoder, num_blocks=1, stack_sizes=(4, 4)),
     'impala_small': functools.partial(ImpalaEncoder, num_blocks=1),
     'impala_large': functools.partial(ImpalaEncoder, stack_sizes=(64, 128, 128), mlp_hidden_dims=(1024,)),
+    'none': Identity,
+    'gru': GRUEncoder,
 }
