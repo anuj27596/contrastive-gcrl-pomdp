@@ -16,6 +16,14 @@ def history_from_observations_actions(observations, actions):
     return history
 
 
+def get_mask(batch_size, context_length):
+    blocks = jnp.repeat(jnp.arange(batch_size), context_length)
+    mask = jnp.expand_dims(blocks, axis=1) == blocks
+    mask = mask - jnp.eye(batch_size * context_length)
+    mask = mask * -1e9
+    return mask
+
+
 class NonMarkovianCRLAgent(flax.struct.PyTreeNode):
     """NonMarkovianCRLAgent Contrastive RL (CRL) agent.
 
@@ -30,7 +38,6 @@ class NonMarkovianCRLAgent(flax.struct.PyTreeNode):
     def contrastive_loss(self, batch, grad_params, module_name='critic'):
         """Compute the contrastive value loss for the Q or V function."""
         batch_size = batch['observations'].shape[0]
-        context_length = batch['observations'].shape[1]
 
         if module_name == 'critic':
             actions = batch['actions']
@@ -44,24 +51,32 @@ class NonMarkovianCRLAgent(flax.struct.PyTreeNode):
             params=grad_params,
         )
 
-        # (todo) implement warmup for goal sampling
-
         if len(phi.shape) == 3:  # Non-ensemble.
             phi = phi[None, ...]
             psi = psi[None, ...]
         
+        # exclude first context_warmup steps from sequence
+        phi = phi[:, :, self.config['context_warmup']:]
+
         # flatten batch_size and context_length
         phi = phi.reshape(phi.shape[0], phi.shape[1] * phi.shape[2], phi.shape[3])
         psi = psi.reshape(psi.shape[0], psi.shape[1] * psi.shape[2], psi.shape[3])
+
+        effective_context_length = self.config['context_length'] - self.config['context_warmup']
+        
+        # get mask to exclude state from same episode as negative goals
+        mask = get_mask(batch_size, effective_context_length)
+        # add ensemble dimension
+        mask = jnp.expand_dims(mask, axis=-1)
         
         logits = jnp.einsum('eik,ejk->ije', phi, psi) / jnp.sqrt(phi.shape[-1])
         # logits.shape is (B, B, e) with one term for positive pair and (B - 1) terms for negative pairs in each row.
-        I = jnp.eye(batch_size * context_length)
+        I = jnp.eye(batch_size * effective_context_length)
         contrastive_loss = jax.vmap(
             lambda _logits: optax.sigmoid_binary_cross_entropy(logits=_logits, labels=I),
             in_axes=-1,
             out_axes=-1,
-        )(logits)
+        )(logits + mask)
         contrastive_loss = jnp.mean(contrastive_loss)
 
         # Compute additional statistics.
