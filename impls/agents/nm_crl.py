@@ -110,7 +110,7 @@ class NonMarkovianCRLAgent(flax.struct.PyTreeNode):
             exp_a = jnp.exp(adv * self.config['alpha'])
             exp_a = jnp.minimum(exp_a, 100.0)
 
-            dist = self.network.select('actor')(batch['observations'], batch['actor_goals'], params=grad_params)
+            dist, *_ = self.network.select('actor')(batch['observations'], batch['actor_goals'], params=grad_params)
             log_prob = dist.log_prob(batch['actions'])
 
             actor_loss = -(exp_a * log_prob).mean()
@@ -133,7 +133,7 @@ class NonMarkovianCRLAgent(flax.struct.PyTreeNode):
             # DDPG+BC loss.
             assert not self.config['discrete']
 
-            dist = self.network.select('actor')(batch['history'], batch['actor_goals'], params=grad_params)
+            dist, *_ = self.network.select('actor')(batch['history'], batch['actor_goals'], params=grad_params)
             if self.config['const_std']:
                 q_actions = jnp.clip(dist.mode(), -1, 1)
             else:
@@ -194,18 +194,12 @@ class NonMarkovianCRLAgent(flax.struct.PyTreeNode):
         """Update the agent and return a new agent with information dictionary."""
         new_rng, rng = jax.random.split(self.rng)
         
-        self.network.model_def.modules.get('actor').gc_encoder.state_encoder.reset_memory(hold=True)
-        
         def loss_fn(grad_params):
             return self.total_loss(batch, grad_params, rng=rng)
 
         new_network, info = self.network.apply_loss_fn(loss_fn=loss_fn)
 
         return self.replace(network=new_network, rng=new_rng), info
-
-    @jax.jit
-    def reset_sampling(self):
-        self.network.model_def.modules.get('actor').gc_encoder.state_encoder.reset_memory(hold=True)
 
     @jax.jit
     def sample_actions(
@@ -215,16 +209,17 @@ class NonMarkovianCRLAgent(flax.struct.PyTreeNode):
         goals=None,
         seed=None,
         temperature=1.0,
+        **kwargs,
     ):
         """Sample actions from the actor."""
         act_obs_pair = jnp.concatenate([observations, prev_actions])
         act_obs_pair = jnp.expand_dims(act_obs_pair, axis=(0, 1))
         goals = jnp.expand_dims(goals, axis=(0, 1))
-        dist = self.network.select('actor')(act_obs_pair, goals, temperature=temperature)
+        dist, *state_info = self.network.select('actor')(act_obs_pair, goals, temperature=temperature, **kwargs)
         actions = dist.sample(seed=seed)
         if not self.config['discrete']:
             actions = jnp.clip(actions, -1, 1)
-        return actions.reshape(prev_actions.shape)
+        return actions.reshape(prev_actions.shape), *state_info
 
     @classmethod
     def create(
@@ -371,6 +366,12 @@ def get_config():
             frame_stack=ml_collections.config_dict.placeholder(int),  # Number of frames to stack.
             context_length=16,
             context_warmup=0,
+            occlusion=dict(
+                type='none',
+                drop_prob=ml_collections.config_dict.placeholder(float),
+                noise_std=ml_collections.config_dict.placeholder(float),
+                occlude_goals=False,
+            ),
         )
     )
     return config

@@ -180,6 +180,7 @@ class GCActor(nn.Module):
         goals=None,
         goal_encoded=False,
         temperature=1.0,
+        **kwargs,
     ):
         """Return the action distribution.
 
@@ -190,7 +191,7 @@ class GCActor(nn.Module):
             temperature: Scaling factor for the standard deviation.
         """
         if self.gc_encoder is not None:
-            inputs = self.gc_encoder(observations, goals, goal_encoded=goal_encoded)
+            inputs, *state_info = self.gc_encoder(observations, goals, goal_encoded=goal_encoded, **kwargs)
         else:
             inputs = [observations]
             if goals is not None:
@@ -213,7 +214,7 @@ class GCActor(nn.Module):
         if self.tanh_squash:
             distribution = TransformedWithMode(distribution, distrax.Block(distrax.Tanh(), ndims=1))
 
-        return distribution
+        return distribution, *state_info
 
 
 class GCDiscreteActor(nn.Module):
@@ -366,7 +367,7 @@ class GCBilinearValue(nn.Module):
             info: Whether to additionally return the representations phi and psi.
         """
         if self.state_encoder is not None:
-            observations = self.state_encoder(observations)
+            observations, *_ = self.state_encoder(observations)
         if self.goal_encoder is not None:
             goals = self.goal_encoder(goals)
 

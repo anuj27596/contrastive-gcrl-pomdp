@@ -73,8 +73,9 @@ def evaluate(
         observation, info = env.reset(options=dict(task_id=task_id, render_goal=should_render))
 
         # (todo) condition on agent class
-        agent.reset_sampling()
-        prev_action = np.zeros(env.action_space.shape)
+        cache = dict(
+            prev_actions=np.zeros(env.action_space.shape),
+        )
 
         goal = info.get('goal')
         goal_frame = info.get('goal_rendered')
@@ -82,13 +83,16 @@ def evaluate(
         step = 0
         render = []
         while not done:
-            action = actor_fn(observations=observation, prev_actions=prev_action, goals=goal, temperature=eval_temperature)
+            action, *state_info = actor_fn(observations=observation, goals=goal, temperature=eval_temperature, **cache)
             action = np.array(action)
             if not config.get('discrete'):
                 if eval_gaussian is not None:
                     action = np.random.normal(action, eval_gaussian)
                 action = np.clip(action, -1, 1)
-            prev_action = action
+
+            cache['prev_actions'] = action
+            if len(state_info) > 0:
+                cache['carry'] = state_info[0].get('carry')
 
             next_observation, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated

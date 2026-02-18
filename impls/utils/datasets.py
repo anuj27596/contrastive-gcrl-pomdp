@@ -7,6 +7,8 @@ import jax.numpy as jnp
 import numpy as np
 from flax.core.frozen_dict import FrozenDict
 
+from utils.occlusions import make_occlusion_module
+
 
 def get_size(data):
     """Return the size of the dataset."""
@@ -426,13 +428,10 @@ class GCPODataset(GCDataset):
     Attributes:
         dataset: Dataset object.
         config: Configuration dictionary.
-        preprocess_frame_stack: Whether to preprocess frame stacks. If False, frame stacks are computed on-the-fly. This
-            saves memory but may slow down training.
     """
 
     dataset: Dataset
     config: Any
-    preprocess_frame_stack: bool = True
 
     def __post_init__(self):
         self.size = self.dataset.size
@@ -456,6 +455,9 @@ class GCPODataset(GCDataset):
         assert np.isclose(
             self.config['actor_p_curgoal'] + self.config['actor_p_trajgoal'] + self.config['actor_p_randomgoal'], 1.0
         )
+
+        obs_ndim = self.dataset['observations'].ndim - 1
+        self.occluder = make_occlusion_module(obs_ndim, self.config['occlusion'])
 
     def sample(self, batch_size, idxs=None, evaluation=False):
         """Sample a batch of histories with goals.
@@ -512,6 +514,8 @@ class GCPODataset(GCDataset):
         if self.config['p_aug'] is not None and not evaluation:
             if np.random.rand() < self.config['p_aug']:
                 self.augment(batch, ['observations', 'next_observations', 'value_goals', 'actor_goals'])
+
+        batch['observations'] = self.occluder(batch['observations'])
 
         return batch
 

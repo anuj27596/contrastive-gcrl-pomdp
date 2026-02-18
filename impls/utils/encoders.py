@@ -116,25 +116,15 @@ class GRUEncoder(nn.Module):
             nn.GRUCell, variable_broadcast="params",
             split_rngs={"params": False}, in_axes=1, out_axes=1)
         self.gru = ScanGRU(self.features)
-        self.hold_memory = False
-        self.carry_memory = None
-
-    def reset_memory(self, hold):
-        self.hold_memory = hold
-        self.carry_memory = None
 
     @nn.compact
-    def __call__(self, x):
+    def __call__(self, x, carry=None):
         x = self.preprocessor(x)
-        input_shape =  x[:, 0].shape
-        if self.hold_memory and self.carry_memory is not None:
-            carry = self.carry_memory
-        else:
+        input_shape = x[:, 0].shape
+        if carry is None:
             carry = self.gru.initialize_carry(jax.random.PRNGKey(np.random.randint(0, 2**32)), input_shape)
         carry, x = self.gru(carry, x)
-        if self.hold_memory:
-            self.carry_memory = carry
-        return x
+        return x, dict(carry=carry)
 
 
 class GCEncoder(nn.Module):
@@ -150,7 +140,7 @@ class GCEncoder(nn.Module):
     concat_encoder: nn.Module = None
 
     @nn.compact
-    def __call__(self, observations, goals=None, goal_encoded=False):
+    def __call__(self, observations, goals=None, goal_encoded=False, **kwargs):
         """Returns the representations of observations and goals.
 
         If `goal_encoded` is True, `goals` is assumed to be already encoded representations. In this case, either
@@ -158,7 +148,8 @@ class GCEncoder(nn.Module):
         """
         reps = []
         if self.state_encoder is not None:
-            reps.append(self.state_encoder(observations))
+            rep, *state_info = self.state_encoder(observations, **kwargs)
+            reps.append(rep)
         if goals is not None:
             if goal_encoded:
                 # Can't have both goal_encoder and concat_encoder in this case.
@@ -170,7 +161,7 @@ class GCEncoder(nn.Module):
                 if self.concat_encoder is not None:
                     reps.append(self.concat_encoder(jnp.concatenate([observations, goals], axis=-1)))
         reps = jnp.concatenate(reps, axis=-1)
-        return reps
+        return reps, *state_info
 
 
 encoder_modules = {
