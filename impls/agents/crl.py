@@ -80,7 +80,7 @@ class CRLAgent(flax.struct.PyTreeNode):
             exp_a = jnp.exp(adv * self.config['alpha'])
             exp_a = jnp.minimum(exp_a, 100.0)
 
-            dist = self.network.select('actor')(batch['observations'], batch['actor_goals'], params=grad_params)
+            dist, *_ = self.network.select('actor')(batch['observations'], batch['actor_goals'], params=grad_params)
             log_prob = dist.log_prob(batch['actions'])
 
             actor_loss = -(exp_a * log_prob).mean()
@@ -103,7 +103,7 @@ class CRLAgent(flax.struct.PyTreeNode):
             # DDPG+BC loss.
             assert not self.config['discrete']
 
-            dist = self.network.select('actor')(batch['observations'], batch['actor_goals'], params=grad_params)
+            dist, *_ = self.network.select('actor')(batch['observations'], batch['actor_goals'], params=grad_params)
             if self.config['const_std']:
                 q_actions = jnp.clip(dist.mode(), -1, 1)
             else:
@@ -178,11 +178,11 @@ class CRLAgent(flax.struct.PyTreeNode):
         temperature=1.0,
     ):
         """Sample actions from the actor."""
-        dist = self.network.select('actor')(observations, goals, temperature=temperature)
+        dist, *_ = self.network.select('actor')(observations, goals, temperature=temperature)
         actions = dist.sample(seed=seed)
         if not self.config['discrete']:
             actions = jnp.clip(actions, -1, 1)
-        return actions
+        return (actions,)
 
     @classmethod
     def create(
@@ -319,6 +319,12 @@ def get_config():
             gc_negative=False,  # Unused (defined for compatibility with GCDataset).
             p_aug=0.0,  # Probability of applying image augmentation.
             frame_stack=ml_collections.config_dict.placeholder(int),  # Number of frames to stack.
+            occlusion=dict(
+                type='none',
+                drop_prob=ml_collections.config_dict.placeholder(float),
+                noise_std=ml_collections.config_dict.placeholder(float),
+                occlude_goals=False,
+            ),
         )
     )
     return config

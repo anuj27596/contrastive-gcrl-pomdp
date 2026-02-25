@@ -66,7 +66,7 @@ class ImpalaEncoder(nn.Module):
     stack_sizes: tuple = (16, 32, 32)
     num_blocks: int = 2
     dropout_rate: float = None
-    mlp_hidden_dims: Sequence[int] = (512,)
+    mlp_hidden_dims: Sequence[int] = (512, 512)
     layer_norm: bool = False
 
     def setup(self):

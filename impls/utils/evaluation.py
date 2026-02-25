@@ -5,6 +5,22 @@ import numpy as np
 from tqdm import trange
 
 
+class EvalCache:
+    def __init__(self, **kwargs):
+        self.cache_dict = kwargs
+
+    def set(self, **kwargs):
+        for k, v in kwargs.items():
+            if k in self.cache_dict.keys():
+                self.cache_dict[k] = v
+
+    def keys(self):
+        return self.cache_dict.keys()
+
+    def __getitem__(self, key):
+        return self.cache_dict.__getitem__(key)
+
+
 def supply_rng(f, rng=jax.random.PRNGKey(0)):
     """Helper function to split the random number generator key before each call to the function."""
 
@@ -72,10 +88,12 @@ def evaluate(
 
         observation, info = env.reset(options=dict(task_id=task_id, render_goal=should_render))
 
-        # (todo) condition on agent class
-        cache = dict(
-            prev_actions=np.zeros(env.action_space.shape),
-        )
+        if config['agent_name'].startswith('nm_'):
+            cache = EvalCache(
+                prev_actions=np.zeros(env.action_space.shape),
+                carry=None)
+        else:
+            cache = EvalCache()
 
         goal = info.get('goal')
         goal_frame = info.get('goal_rendered')
@@ -90,9 +108,9 @@ def evaluate(
                     action = np.random.normal(action, eval_gaussian)
                 action = np.clip(action, -1, 1)
 
-            cache['prev_actions'] = action
+            cache.set(prev_actions=action)
             if len(state_info) > 0:
-                cache['carry'] = state_info[0].get('carry')
+                cache.set(carry=state_info[0].get('carry'))
 
             next_observation, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated

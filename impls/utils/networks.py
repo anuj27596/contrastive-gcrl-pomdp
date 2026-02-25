@@ -197,6 +197,7 @@ class GCActor(nn.Module):
             if goals is not None:
                 inputs.append(goals)
             inputs = jnp.concatenate(inputs, axis=-1)
+            state_info = tuple()
         outputs = self.actor_net(inputs)
 
         means = self.mean_net(outputs)

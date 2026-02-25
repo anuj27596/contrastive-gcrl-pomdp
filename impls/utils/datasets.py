@@ -204,6 +204,8 @@ class GCDataset:
                 stacked_observations = self.get_stacked_observations(np.arange(self.size))
                 self.dataset = Dataset(self.dataset.copy(dict(observations=stacked_observations)))
 
+        self.occluder = make_occlusion_module(self.dataset['observations'].ndim - 1, self.config['occlusion'])
+
     def sample(self, batch_size, idxs=None, evaluation=False):
         """Sample a batch of transitions with goals.
 
@@ -249,6 +251,7 @@ class GCDataset:
             if np.random.rand() < self.config['p_aug']:
                 self.augment(batch, ['observations', 'next_observations', 'value_goals', 'actor_goals'])
 
+        batch['observations'] = self.occluder(batch['observations'])
         return batch
 
     def sample_goals(self, idxs, p_curgoal, p_trajgoal, p_randomgoal, geom_sample):

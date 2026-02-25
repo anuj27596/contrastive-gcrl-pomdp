@@ -9,6 +9,7 @@ from gymnasium.spaces import Box
 
 import ogbench
 from utils.datasets import Dataset
+from utils.occlusions import make_occlusion_module
 
 
 class EpisodeMonitor(gymnasium.Wrapper):
@@ -76,12 +77,23 @@ class FrameStackWrapper(gymnasium.Wrapper):
         return self.get_observation(), reward, terminated, truncated, info
 
 
-def make_env_and_datasets(dataset_name, frame_stack=None):
+class OcclusionWrapper(gymnasium.Wrapper):
+    """Environment wrapper to occlude observations."""
+    def __init__(self, env, occlusion_config):
+        super().__init__(env)
+        self.occluder = make_occlusion_module(len(env.observation_space.shape), occlusion_config)
+
+    def step(self, action):
+        ob, reward, terminated, truncated, info = self.env.step(action)
+        return self.occluder(ob), reward, terminated, truncated, info
+
+
+def make_env_and_datasets(dataset_name, config):
     """Make OGBench environment and datasets.
 
     Args:
         dataset_name: Name of the dataset.
-        frame_stack: Number of frames to stack.
+        config: config
 
     Returns:
         A tuple of the environment, training dataset, and validation dataset.
@@ -91,8 +103,11 @@ def make_env_and_datasets(dataset_name, frame_stack=None):
     train_dataset = Dataset.create(**train_dataset)
     val_dataset = Dataset.create(**val_dataset)
 
-    if frame_stack is not None:
-        env = FrameStackWrapper(env, frame_stack)
+    if config['frame_stack'] is not None:
+        env = FrameStackWrapper(env, config['frame_stack'])
+
+    if config.get('occlusion') is not None:
+        env = OcclusionWrapper(env, config['occlusion'])
 
     env.reset()
 
