@@ -251,10 +251,16 @@ class NonMarkovianCRLAgent(flax.struct.PyTreeNode):
         encoders = dict()
         history_encoder_module = encoder_modules[config['history_encoder']]
         goal_encoder_module = encoder_modules[config['goal_encoder']]
+
         encoders['critic_state'] = history_encoder_module()
+        if config['common_history_encoder']:
+            actor_history_encoder = encoders['critic_state']
+        else:
+            actor_history_encoder = history_encoder_module()
+
         encoders['critic_goal'] = goal_encoder_module()
         encoders['actor'] = GCEncoder(
-            state_encoder=history_encoder_module(),
+            state_encoder=actor_history_encoder,
             goal_encoder=goal_encoder_module())
         actor_encoder = encoders['actor']
         if config['actor_loss'] == 'awr':
@@ -372,6 +378,7 @@ def get_config():
                 noise_std=ml_collections.config_dict.placeholder(float),
                 occlude_goals=False,
             ),
+            common_history_encoder=False,
         )
     )
     return config
