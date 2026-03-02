@@ -81,6 +81,8 @@ def evaluate(
     trajs = []
     stats = defaultdict(list)
 
+    nm_agent = config['agent_name'].startswith('nm_')
+
     renders = []
     for i in trange(num_eval_episodes + num_video_episodes):
         traj = defaultdict(list)
@@ -88,12 +90,10 @@ def evaluate(
 
         observation, info = env.reset(options=dict(task_id=task_id, render_goal=should_render))
 
-        if config['agent_name'].startswith('nm_'):
-            cache = EvalCache(
-                prev_actions=np.zeros(env.action_space.shape),
-                carry=None)
+        if nm_agent:
+            cache = dict(carry=None)
         else:
-            cache = EvalCache()
+            cache = dict()
 
         goal = info.get('goal')
         goal_frame = info.get('goal_rendered')
@@ -101,16 +101,37 @@ def evaluate(
         step = 0
         render = []
         while not done:
-            action, *state_info = actor_fn(observations=observation, goals=goal, temperature=eval_temperature, **cache)
-            action = np.array(action)
+            kwargs = dict()
+            if nm_agent:
+                if config['eval_context_type'] == 'trunc':
+                    kwargs['prev_actions'] = np.stack(
+                        [np.zeros(env.action_space.shape)]
+                        + traj['action'][-config['context_length']:],
+                        axis=0)
+                    kwargs['observations'] = np.stack(
+                        traj['observation'][-config['context_length']:]
+                        + [observation],
+                        axis=0)
+                elif config['eval_context_type'] == 'full' and len(traj['action']) > 0:
+                    kwargs['prev_actions'] = np.expand_dims(traj['action'][-1], axis=0)
+                    kwargs['observations'] = np.expand_dims(observation, axis=0)
+                    kwargs['carry'] = cache.get('carry')
+                else:
+                    kwargs['prev_actions'] = np.zeros((1, *env.action_space.shape))
+                    kwargs['observations'] = np.expand_dims(observation, axis=0)
+
+            else:
+                kwargs['observations'] = observation
+
+            action, *state_info = actor_fn(goals=goal, temperature=eval_temperature, **kwargs)
+            action = np.reshape(action, env.action_space.shape)
             if not config.get('discrete'):
                 if eval_gaussian is not None:
                     action = np.random.normal(action, eval_gaussian)
                 action = np.clip(action, -1, 1)
 
-            cache.set(prev_actions=action)
-            if len(state_info) > 0:
-                cache.set(carry=state_info[0].get('carry'))
+            if nm_agent and len(state_info) > 0:
+                cache['carry'] = state_info[0].get('carry')
 
             next_observation, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated

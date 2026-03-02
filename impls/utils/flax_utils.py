@@ -159,6 +159,21 @@ class TrainState(flax.struct.PyTreeNode):
         return self.apply_gradients(grads=grads), info
 
 
+class StopGradWrapper(nn.Module):
+    """Wrapper for stopping gradients
+
+    Attributes:
+        module: module to be wrapped
+
+    """
+
+    module: Any
+
+    @nn.compact
+    def __call__(self, *args, **kwargs):
+        return jax.lax.stop_gradient(self.module(*args, **kwargs))
+
+
 def save_agent(agent, save_dir, epoch):
     """Save the agent to a file.
 

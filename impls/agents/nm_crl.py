@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import ml_collections
 import optax
 from utils.encoders import GCEncoder, encoder_modules
-from utils.flax_utils import ModuleDict, TrainState, nonpytree_field
+from utils.flax_utils import ModuleDict, TrainState, StopGradWrapper, nonpytree_field
 from utils.networks import GCActor, GCBilinearValue, GCDiscreteActor, GCDiscreteBilinearCritic
 
 
@@ -212,14 +212,15 @@ class NonMarkovianCRLAgent(flax.struct.PyTreeNode):
         **kwargs,
     ):
         """Sample actions from the actor."""
-        act_obs_pair = jnp.concatenate([observations, prev_actions])
-        act_obs_pair = jnp.expand_dims(act_obs_pair, axis=(0, 1))
+        act_obs_pair = jnp.concatenate([observations, prev_actions], axis=-1)
+        act_obs_pair = jnp.expand_dims(act_obs_pair, axis=0)
         goals = jnp.expand_dims(goals, axis=(0, 1))
+        goals = jnp.repeat(goals, act_obs_pair.shape[1], axis=1)
         dist, *state_info = self.network.select('actor')(act_obs_pair, goals, temperature=temperature, **kwargs)
         actions = dist.sample(seed=seed)
         if not self.config['discrete']:
             actions = jnp.clip(actions, -1, 1)
-        return actions.reshape(prev_actions.shape), *state_info
+        return actions[:, -1], *state_info
 
     @classmethod
     def create(
@@ -257,6 +258,9 @@ class NonMarkovianCRLAgent(flax.struct.PyTreeNode):
             actor_history_encoder = encoders['critic_state']
         else:
             actor_history_encoder = history_encoder_module()
+
+        if config['freeze_actor_encoder']:
+            actor_history_encoder = StopGradWrapper(actor_history_encoder)
 
         encoders['critic_goal'] = goal_encoder_module()
         encoders['actor'] = GCEncoder(
@@ -372,6 +376,7 @@ def get_config():
             frame_stack=ml_collections.config_dict.placeholder(int),  # Number of frames to stack.
             context_length=16,
             context_warmup=0,
+            eval_context_type='full', # 'full', 'trunc'
             occlusion=dict(
                 type='none',
                 drop_prob=ml_collections.config_dict.placeholder(float),
@@ -379,6 +384,7 @@ def get_config():
                 occlude_goals=False,
             ),
             common_history_encoder=False,
+            freeze_actor_encoder=False,
         )
     )
     return config
