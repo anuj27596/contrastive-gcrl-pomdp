@@ -1,0 +1,36 @@
+#!/bin/bash
+
+#SBATCH --gpus=1
+#SBATCH --cpus-per-task=2
+#SBATCH --mem-per-cpu=8G
+#SBATCH --time=23:59:59
+#SBATCH --job-name=ogpobench
+#SBATCH --output={run_dir}/sbatch/log.out
+#SBATCH --error={run_dir}/sbatch/log.err
+
+source $HOME/.bash_profile
+
+export MUJOCO_GL=egl
+export XLA_PYTHON_CLIENT_MEM_FRACTION=.8
+export TF_FORCE_GPU_ALLOW_GROWTH=true
+export TF_DETERMINISTIC_OPS=0
+
+module load eth_proxy
+module load stack/2024-06
+module load cuda/12.9
+
+cd $HOME/contrastive-gcrl-pomdp/impls
+
+echo running > {run_dir}/status.txt
+
+uv run main.py \
+	--save_dir {run_dir} \
+	{args}
+
+
+if [ $? -eq 0 ]; then
+    echo succeeded > {run_dir}/status.txt
+else
+    echo failed > {run_dir}/status.txt
+fi
+
