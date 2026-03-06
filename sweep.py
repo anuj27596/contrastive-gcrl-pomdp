@@ -143,8 +143,6 @@ def main(_):
     print('Reading sweep configuration')
     with open(FLAGS.config, 'r') as file:
         sweep = eval(file.read())
-    import ipdb;ipdb.set_trace()
-    exit()
 
     print('Reading template')
     with open(FLAGS.template, 'r') as file:
