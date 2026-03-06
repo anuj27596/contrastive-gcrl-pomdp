@@ -8,6 +8,8 @@
 #SBATCH --output={run_dir}/sbatch/log.out
 #SBATCH --error={run_dir}/sbatch/log.err
 
+RUN_DIR={run_dir}
+
 source $HOME/.bash_profile
 
 export MUJOCO_GL=egl
@@ -19,18 +21,19 @@ module load eth_proxy
 module load stack/2024-06
 module load cuda/12.9
 
+echo running > $RUN_DIR/status.txt
+
 cd $HOME/contrastive-gcrl-pomdp/impls
 
-echo running > {run_dir}/status.txt
-
 uv run main.py \
-	--save_dir {run_dir} \
+	--save_dir $RUN_DIR \
 	{args}
 
+cd $OLDPWD
 
 if [ $? -eq 0 ]; then
-    echo succeeded > {run_dir}/status.txt
+    echo succeeded > $RUN_DIR/status.txt
 else
-    echo failed > {run_dir}/status.txt
+    echo failed > $RUN_DIR/status.txt
 fi
 
