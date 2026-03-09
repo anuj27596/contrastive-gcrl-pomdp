@@ -29,8 +29,6 @@ uv run main.py \
 	--save_dir $RUN_DIR \
 	{args}
 
-cd $OLDPWD
-
 if [ $? -eq 0 ]; then
     echo succeeded > $RUN_DIR/status.txt
 else
