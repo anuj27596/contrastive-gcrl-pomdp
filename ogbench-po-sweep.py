@@ -1,5 +1,6 @@
 Product([
   Singleton({
+    'run_group': 'OGPO-v1',
     'eval_episodes': 50,
   }),
   # agents
