@@ -391,6 +391,83 @@ class GCBilinearValue(nn.Module):
             return v
 
 
+class GCProbabilisticBilinearValue(nn.Module):
+    """Goal-conditioned bilinear value/critic function.
+
+    This module computes the value function as V(s, g) = phi(s)^T psi(g) / sqrt(d) or the critic function as
+    Q(s, a, g) = phi(s, a)^T psi(g) / sqrt(d), where phi and psi output d-dimensional vectors.
+
+    Attributes:
+        hidden_dims: Hidden layer dimensions.
+        latent_dim: Latent dimension.
+        layer_norm: Whether to apply layer normalization.
+        ensemble: Whether to ensemble the value function.
+        value_exp: Whether to exponentiate the value. Useful for contrastive learning.
+        state_encoder: Optional state encoder.
+        goal_encoder: Optional goal encoder.
+    """
+
+    hidden_dims: Sequence[int]
+    latent_dim: int
+    layer_norm: bool = True
+    ensemble: bool = True
+    value_exp: bool = False
+    state_encoder: nn.Module = None
+    goal_encoder: nn.Module = None
+    lcb_beta: float = 2.0
+    log_std_min: Optional[float] = -5
+    log_std_max: Optional[float] = 2
+
+    def setup(self):
+        mlp_module = MLP
+        if self.ensemble:
+            mlp_module = ensemblize(mlp_module, 2)
+
+        self.phi = mlp_module((*self.hidden_dims, self.latent_dim * 2), activate_final=False, layer_norm=self.layer_norm)
+        self.psi = mlp_module((*self.hidden_dims, self.latent_dim), activate_final=False, layer_norm=self.layer_norm)
+
+    def __call__(self, observations, goals, actions=None, info=False, temperature=1.0):
+        """Return the value/critic function.
+
+        Args:
+            observations: Observations.
+            goals: Goals.
+            actions: Actions (optional).
+            info: Whether to additionally return the representations phi and psi.
+        """
+        if self.state_encoder is not None:
+            observations, *_ = self.state_encoder(observations)
+        if self.goal_encoder is not None:
+            goals = self.goal_encoder(goals)
+
+        if actions is None:
+            phi_inputs = observations
+        else:
+            phi_inputs = jnp.concatenate([observations, actions], axis=-1)
+
+        phi = self.phi(phi_inputs)
+        phi_mean, phi_logstd = phi[..., :self.latent_dim], phi[..., self.latent_dim:]
+
+        phi_logstd = jnp.clip(phi_logstd, self.log_std_min, self.log_std_max)
+        phi_std = jnp.exp(phi_logstd) * temperature
+
+        phi_dist = distrax.MultivariateNormalDiag(loc=phi_mean, scale_diag=phi_std)
+
+        psi = self.psi(goals)
+
+        v_mean = (phi_mean * psi / jnp.sqrt(self.latent_dim)).sum(axis=-1)
+        v_std = jnp.sqrt((phi_std ** 2 * jnp.abs(psi) / jnp.sqrt(self.latent_dim)).sum(axis=-1))
+        v_lcb = v_mean - self.lcb_beta * v_std
+
+        if self.value_exp:
+            v_lcb = jnp.exp(v_lcb)
+
+        if info:
+            return v_lcb, phi_dist, psi
+        else:
+            return v_lcb
+
+
 class GCDiscreteBilinearCritic(GCBilinearValue):
     """Goal-conditioned bilinear critic for discrete actions."""
 

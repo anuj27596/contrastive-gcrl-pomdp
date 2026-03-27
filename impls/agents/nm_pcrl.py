@@ -7,7 +7,7 @@ import ml_collections
 import optax
 from utils.encoders import GCEncoder, encoder_modules
 from utils.flax_utils import ModuleDict, TrainState, StopGradWrapper, nonpytree_field
-from utils.networks import GCActor, GCBilinearValue, GCDiscreteActor, GCDiscreteBilinearCritic
+from utils.networks import GCActor, GCBilinearValue, GCDiscreteActor, GCDiscreteBilinearCritic, GCProbabilisticBilinearValue
 
 
 def history_from_observations_actions(observations, actions):
@@ -23,9 +23,14 @@ def get_mask(batch_size, context_length):
     mask = mask * -1e9
     return mask
 
+def logit_mean_sigmoid(logits, axis):
+    probs = jax.scipy.special.expit(logits)
+    probs = jnp.mean(probs, axis)
+    return jax.scipy.special.logit(probs)
 
-class NonMarkovianCRLAgent(flax.struct.PyTreeNode):
-    """Non-Markovian Contrastive RL (NM-CRL) agent.
+
+class NonMarkovianProbabilisticCRLAgent(flax.struct.PyTreeNode):
+    """Non-Markovian Probabilistic Contrastive RL (NM-PCRL) agent.
 
     This implementation supports both AWR (actor_loss='awr') and DDPG+BC (actor_loss='ddpgbc') for the actor loss.
     CRL with DDPG+BC only fits a Q function, while CRL with AWR fits both Q and V functions to compute advantages.
@@ -35,7 +40,7 @@ class NonMarkovianCRLAgent(flax.struct.PyTreeNode):
     network: Any
     config: Any = nonpytree_field()
 
-    def contrastive_loss(self, batch, grad_params, module_name='critic'):
+    def mc_contrastive_loss(self, batch, grad_params, module_name='critic', num_mc_samples=64, rng=None):
         """Compute the contrastive value loss for the Q or V function."""
         batch_size = batch['observations'].shape[0]
 
@@ -43,7 +48,7 @@ class NonMarkovianCRLAgent(flax.struct.PyTreeNode):
             actions = batch['actions']
         else:
             actions = None
-        v, phi, psi = self.network.select(module_name)(
+        v, phi_dist, psi = self.network.select(module_name)(
             batch['history'],
             batch['value_goals'],
             actions=actions,
@@ -51,15 +56,17 @@ class NonMarkovianCRLAgent(flax.struct.PyTreeNode):
             params=grad_params,
         )
 
-        if len(phi.shape) == 3:  # Non-ensemble.
+        phi = phi_dist.sample(seed=rng, sample_shape=(num_mc_samples,))
+
+        if len(phi.shape) == 4:  # Non-ensemble.
             phi = phi[None, ...]
             psi = psi[None, ...]
         
         # exclude first context_warmup steps from sequence
-        phi = phi[:, :, self.config['context_warmup']:]
+        phi = phi[:, :, :, self.config['context_warmup']:]
 
         # flatten batch_size and context_length
-        phi = phi.reshape(phi.shape[0], phi.shape[1] * phi.shape[2], phi.shape[3])
+        phi = phi.reshape(phi.shape[0], phi.shape[1], phi.shape[2] * phi.shape[3], phi.shape[4])
         psi = psi.reshape(psi.shape[0], psi.shape[1] * psi.shape[2], psi.shape[3])
 
         effective_context_length = self.config['context_length'] - self.config['context_warmup']
@@ -69,7 +76,8 @@ class NonMarkovianCRLAgent(flax.struct.PyTreeNode):
         # add ensemble dimension
         mask = jnp.expand_dims(mask, axis=-1)
         
-        logits = jnp.einsum('eik,ejk->ije', phi, psi) / jnp.sqrt(phi.shape[-1])
+        logits = jnp.einsum('meik,ejk->ijem', phi, psi) / jnp.sqrt(phi.shape[-1])
+        logits = logit_mean_sigmoid(logits, axis=-1)
         # logits.shape is (B, B, e) with one term for positive pair and (B - 1) terms for negative pairs in each row.
         I = jnp.eye(batch_size * effective_context_length)
         contrastive_loss = jax.vmap(
@@ -170,12 +178,14 @@ class NonMarkovianCRLAgent(flax.struct.PyTreeNode):
 
         batch['history'] = history_from_observations_actions(batch['observations'], batch['actions'])
 
-        critic_loss, critic_info = self.contrastive_loss(batch, grad_params, 'critic')
+        rng, critic_rng = jax.random.split(rng)
+        critic_loss, critic_info = self.mc_contrastive_loss(batch, grad_params, 'critic', rng=critic_rng)
         for k, v in critic_info.items():
             info[f'critic/{k}'] = v
 
         if self.config['actor_loss'] == 'awr':
-            value_loss, value_info = self.contrastive_loss(batch, grad_params, 'value')
+            rng, critic_rng = jax.random.split(rng)
+            value_loss, value_info = self.mc_contrastive_loss(batch, grad_params, 'value', rng=critic_rng)
             for k, v in value_info.items():
                 info[f'value/{k}'] = v
         else:
@@ -284,7 +294,7 @@ class NonMarkovianCRLAgent(flax.struct.PyTreeNode):
                 action_dim=action_dim,
             )
         else:
-            critic_def = GCBilinearValue(
+            critic_def = GCProbabilisticBilinearValue(
                 hidden_dims=config['value_hidden_dims'],
                 latent_dim=config['latent_dim'],
                 layer_norm=config['layer_norm'],
@@ -346,7 +356,7 @@ def get_config():
     config = ml_collections.ConfigDict(
         dict(
             # Agent hyperparameters.
-            agent_name='nm_crl',  # Agent name.
+            agent_name='nm_pcrl',  # Agent name.
             lr=3e-4,  # Learning rate.
             batch_size=64,  # Batch size.
             actor_hidden_dims=(512, 512),  # Actor network hidden dimensions.
