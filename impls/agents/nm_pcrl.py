@@ -48,7 +48,7 @@ class NonMarkovianProbabilisticCRLAgent(flax.struct.PyTreeNode):
             actions = batch['actions']
         else:
             actions = None
-        v, phi_dist, psi = self.network.select(module_name)(
+        v_mean, v_std, phi_dist, psi = self.network.select(module_name)(
             batch['history'],
             batch['value_goals'],
             actions=actions,
@@ -88,7 +88,7 @@ class NonMarkovianProbabilisticCRLAgent(flax.struct.PyTreeNode):
         contrastive_loss = jnp.mean(contrastive_loss)
 
         # Compute additional statistics.
-        v = jnp.exp(v)
+        v = jnp.exp(v_mean)
         logits = jnp.mean(logits, axis=-1)
         correct = jnp.argmax(logits, axis=1) == jnp.argmax(I, axis=1)
         logits_pos = jnp.sum(logits * I) / jnp.sum(I)
@@ -99,6 +99,7 @@ class NonMarkovianProbabilisticCRLAgent(flax.struct.PyTreeNode):
             'v_mean': v.mean(),
             'v_max': v.max(),
             'v_min': v.min(),
+            'logv_std': v_std.max(),
             'binary_accuracy': jnp.mean((logits > 0) == I),
             'categorical_accuracy': jnp.mean(correct),
             'logits_pos': logits_pos,

@@ -463,7 +463,7 @@ class GCProbabilisticBilinearValue(nn.Module):
             v_lcb = jnp.exp(v_lcb)
 
         if info:
-            return v_lcb, phi_dist, psi
+            return v_mean, v_std, phi_dist, psi
         else:
             return v_lcb
 
