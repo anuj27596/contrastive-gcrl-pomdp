@@ -141,7 +141,7 @@ def main(_):
                     if any([k.startswith(m) for m in metric_names])}
                 )
                 for k, v in eval_info.items():
-                    if k in metric_names:
+                    if any([k.startswith(m) for m in metric_names]):
                         overall_metrics[k].append(v)
             for k, v in overall_metrics.items():
                 eval_metrics[f'evaluation/overall_{k}'] = np.mean(v)
