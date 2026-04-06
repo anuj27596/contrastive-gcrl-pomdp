@@ -5,22 +5,6 @@ import numpy as np
 from tqdm import trange
 
 
-class EvalCache:
-    def __init__(self, **kwargs):
-        self.cache_dict = kwargs
-
-    def set(self, **kwargs):
-        for k, v in kwargs.items():
-            if k in self.cache_dict.keys():
-                self.cache_dict[k] = v
-
-    def keys(self):
-        return self.cache_dict.keys()
-
-    def __getitem__(self, key):
-        return self.cache_dict.__getitem__(key)
-
-
 def supply_rng(f, rng=jax.random.PRNGKey(0)):
     """Helper function to split the random number generator key before each call to the function."""
 
@@ -159,6 +143,9 @@ def evaluate(
             trajs.append(traj)
         else:
             renders.append(np.array(render))
+
+    for p in [2, 5, 10, 25]:
+        stats[f'success_{p}_percentile'] = np.percentile(stats['success'], p)
 
     for k, v in stats.items():
         stats[k] = np.mean(v)

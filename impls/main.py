@@ -137,7 +137,8 @@ def main(_):
                 renders.extend(cur_renders)
                 metric_names = ['success']
                 eval_metrics.update(
-                    {f'evaluation/{task_name}_{k}': v for k, v in eval_info.items() if k in metric_names}
+                    {f'evaluation/{task_name}_{k}': v for k, v in eval_info.items()
+                    if any([k.startswith(m) for m in metric_names])}
                 )
                 for k, v in eval_info.items():
                     if k in metric_names:

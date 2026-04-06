@@ -40,7 +40,7 @@ class NonMarkovianProbabilisticCRLAgent(flax.struct.PyTreeNode):
     network: Any
     config: Any = nonpytree_field()
 
-    def mc_contrastive_loss(self, batch, grad_params, module_name='critic', num_mc_samples=64, rng=None):
+    def mc_contrastive_loss(self, batch, grad_params, module_name='critic', rng=None):
         """Compute the contrastive value loss for the Q or V function."""
         batch_size = batch['observations'].shape[0]
 
@@ -56,7 +56,7 @@ class NonMarkovianProbabilisticCRLAgent(flax.struct.PyTreeNode):
             params=grad_params,
         )
 
-        phi = phi_dist.sample(seed=rng, sample_shape=(num_mc_samples,))
+        phi = phi_dist.sample(seed=rng, sample_shape=(self.config['pcl_mc_samples'],))
 
         if len(phi.shape) == 4:  # Non-ensemble.
             phi = phi[None, ...]
@@ -94,12 +94,18 @@ class NonMarkovianProbabilisticCRLAgent(flax.struct.PyTreeNode):
         logits_pos = jnp.sum(logits * I) / jnp.sum(I)
         logits_neg = jnp.sum(logits * (1 - I)) / jnp.sum(1 - I)
 
+        v_std_shrink = (v_std[:, :, 1:] / v_std[:, :, :-1]).mean()
+        v_std_diff = (v_std[:, :, 1:] - v_std[:, :, :-1]).mean()
+
         return contrastive_loss, {
             'contrastive_loss': contrastive_loss,
             'v_mean': v.mean(),
             'v_max': v.max(),
             'v_min': v.min(),
-            'logv_std': v_std.max(),
+            'logv_std_mean': v_std.mean(),
+            'logv_std_std': v_std.std(),
+            'logv_std_shrink': v_std_shrink,
+            'logv_std_diff': v_std_diff,
             'binary_accuracy': jnp.mean((logits > 0) == I),
             'categorical_accuracy': jnp.mean(correct),
             'logits_pos': logits_pos,
@@ -396,6 +402,7 @@ def get_config():
             ),
             common_history_encoder=False,
             freeze_actor_encoder=False,
+            pcl_mc_samples=16,
         )
     )
     return config
