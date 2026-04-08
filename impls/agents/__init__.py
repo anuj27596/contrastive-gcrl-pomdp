@@ -6,6 +6,7 @@ from agents.hiql import HIQLAgent
 from agents.qrl import QRLAgent
 from agents.sac import SACAgent
 from agents.nm_crl import NonMarkovianCRLAgent
+from agents.pcrl import ProbabilisticCRLAgent
 from agents.nm_pcrl import NonMarkovianProbabilisticCRLAgent
 
 agents = dict(
@@ -17,5 +18,6 @@ agents = dict(
     qrl=QRLAgent,
     sac=SACAgent,
     nm_crl=NonMarkovianCRLAgent,
+    pcrl=ProbabilisticCRLAgent,
     nm_pcrl=NonMarkovianProbabilisticCRLAgent,
 )
