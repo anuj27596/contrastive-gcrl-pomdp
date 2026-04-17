@@ -148,7 +148,7 @@ def evaluate(
 
     for p in [2, 5, 10, 25]:
         stats[f'success_{p}_percentile'] = np.percentile(stats['success'], p)
-        stats[f'success_{p}_percentile_mean'] = stats['success'][:round(p * stats['success'].size)].mean()
+        stats[f'success_{p}_percentile_mean'] = stats['success'][:int(np.ceil(p / 100 * stats['success'].size))].mean()
 
     for k, v in stats.items():
         stats[k] = np.mean(v)

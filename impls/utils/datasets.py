@@ -242,6 +242,7 @@ class GCDataset:
         )
 
         batch['value_goals'] = self.get_observations(value_goal_idxs)
+        batch['value_goal_offsets'] = value_goal_idxs - idxs
         batch['actor_goals'] = self.get_observations(actor_goal_idxs)
         successes = (idxs == value_goal_idxs).astype(float)
         batch['masks'] = 1.0 - successes

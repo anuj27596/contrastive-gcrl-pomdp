@@ -391,6 +391,81 @@ class GCBilinearValue(nn.Module):
             return v
 
 
+class GCDistanceClassifier(nn.Module):
+    """Goal-conditioned distance classifier critic function.
+
+    This module computes the value function as V(s, g) = phi(s)^T psi(g) / sqrt(d) or the critic function as
+    Q(s, a, g) = phi(s, a)^T psi(g) / sqrt(d), where phi and psi output d-dimensional vectors.
+
+    Attributes:
+        hidden_dims: Hidden layer dimensions.
+        latent_dim: Latent dimension.
+        layer_norm: Whether to apply layer normalization.
+        ensemble: Whether to ensemble the value function.
+        value_exp: Whether to exponentiate the value. Useful for contrastive learning.
+        state_encoder: Optional state encoder.
+        goal_encoder: Optional goal encoder.
+    """
+
+    hidden_dims: Sequence[int]
+    latent_dim: int
+    num_bins: int
+    log_trunc: int
+    binning_mode: Any = None
+    layer_norm: bool = True
+    ensemble: bool = True
+    state_encoder: nn.Module = None
+    goal_encoder: nn.Module = None
+    value_exp: bool = False
+
+    def setup(self):
+        mlp_module = MLP
+        if self.ensemble:
+            mlp_module = ensemblize(mlp_module, 2)
+
+        self.phi = mlp_module((*self.hidden_dims, self.num_bins * self.latent_dim), activate_final=False, layer_norm=self.layer_norm)
+        self.psi = mlp_module((*self.hidden_dims, self.num_bins * self.latent_dim), activate_final=False, layer_norm=self.layer_norm)
+
+    def __call__(self, observations, goals, actions=None, info=False):
+        """Return the value/critic function.
+
+        Args:
+            observations: Observations.
+            goals: Goals.
+            actions: Actions (optional).
+            info: Whether to additionally return the representations phi and psi.
+        """
+        if self.state_encoder is not None:
+            observations, *_ = self.state_encoder(observations)
+        if self.goal_encoder is not None:
+            goals = self.goal_encoder(goals)
+
+        if actions is None:
+            phi_inputs = observations
+        else:
+            phi_inputs = jnp.concatenate([observations, actions], axis=-1)
+
+        phi = self.phi(phi_inputs)
+        psi = self.psi(goals)
+
+        phi = jnp.reshape(phi, (*phi.shape[:-1], self.num_bins, self.latent_dim))
+        psi = jnp.reshape(psi, (*psi.shape[:-1], self.num_bins, self.latent_dim))
+
+        logits = (phi * psi / jnp.sqrt(self.latent_dim)).sum(axis=-1)
+
+        if self.binning_mode == 'time':
+            adjusted_discount = jnp.exp(- self.log_trunc / self.num_bins)
+            bin_weights = (1 - adjusted_discount) * adjusted_discount ** jnp.arange(self.num_bins)
+            v = (jax.nn.sigmoid(logits) * bin_weights).sum(axis=-1)
+        elif self.binning_mode == 'discount':
+            v = jax.nn.sigmoid(logits).mean(axis=-1)
+
+        if info:
+            return v, logits, phi, psi
+        else:
+            return v
+
+
 class GCProbabilisticBilinearValue(nn.Module):
     """Goal-conditioned bilinear value/critic function.
 
