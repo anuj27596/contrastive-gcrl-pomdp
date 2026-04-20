@@ -61,6 +61,7 @@ class DNCEAgent(flax.struct.PyTreeNode):
         critic_loss = jnp.mean(critic_loss)
 
         # Compute additional statistics.        
+        v = jnp.exp(v)
         logits = jnp.mean(logits, axis=-1)
         correct = jnp.argmax(logits, axis=-1) == jnp.argmax(labels, axis=-1)
         logits_pos = jnp.sum(logits * labels) / jnp.sum(labels)

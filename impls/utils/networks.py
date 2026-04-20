@@ -460,6 +460,9 @@ class GCDistanceClassifier(nn.Module):
         elif self.binning_mode == 'discount':
             v = jax.nn.sigmoid(logits).mean(axis=-1)
 
+        if not self.value_exp:
+            v = jnp.log(v)
+
         if info:
             return v, logits, phi, psi
         else:
