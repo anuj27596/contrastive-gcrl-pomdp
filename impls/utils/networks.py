@@ -411,6 +411,7 @@ class GCDistanceClassifier(nn.Module):
     latent_dim: int
     num_bins: int
     log_trunc: int
+    tail_quantile: float
     binning_mode: Any = None
     layer_norm: bool = True
     ensemble: bool = True
@@ -455,18 +456,31 @@ class GCDistanceClassifier(nn.Module):
 
         if self.binning_mode == 'time':
             adjusted_discount = jnp.exp(- self.log_trunc / self.num_bins)
-            bin_weights = (1 - adjusted_discount) * adjusted_discount ** jnp.arange(self.num_bins)
-            v = (jax.nn.sigmoid(logits) * bin_weights).sum(axis=-1)
+            bin_weights = (1 - adjusted_discount) / (1 - jnp.exp(-self.log_trunc)) * adjusted_discount ** jnp.arange(self.num_bins)
         elif self.binning_mode == 'discount':
-            v = jax.nn.sigmoid(logits).mean(axis=-1)
+            bin_weights = jnp.ones(num_bins) / num_bins
+
+        probs = jax.nn.sigmoid(logits)
+
+        v = (probs * bin_weights).sum(axis=-1)
+
+        logit_order = jnp.argsort(logits, axis=-1)
+        logit_rank = jnp.argsort(logit_order, axis=-1)
+        upper_tail = jnp.cumsum(bin_weights[logit_order], axis=-1) >= self.tail_quantile
+        upper_tail = upper_tail[
+            jnp.expand_dims(jnp.arange(upper_tail.shape[0]), axis=(1, 2)),
+            jnp.expand_dims(jnp.arange(upper_tail.shape[1]), axis=1),
+            logit_rank]
+        v_upper_tail_mean = (probs * bin_weights * upper_tail).sum(axis=-1) / ((bin_weights * upper_tail).sum(axis=-1) + 1e-9)
 
         if not self.value_exp:
             v = jnp.log(v)
+            v_upper_tail_mean = jnp.log(v_upper_tail_mean)
 
         if info:
-            return v, logits, phi, psi
+            return v, v_upper_tail_mean, logits, phi, psi
         else:
-            return v
+            return v_upper_tail_mean
 
 
 class GCProbabilisticBilinearValue(nn.Module):

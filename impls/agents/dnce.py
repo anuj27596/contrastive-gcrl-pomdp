@@ -29,7 +29,7 @@ class DNCEAgent(flax.struct.PyTreeNode):
             actions = batch['actions']
         else:
             actions = None
-        v, _, phi, psi = self.network.select(module_name)(
+        v, v_upper_tail_mean, logits, phi, psi = self.network.select(module_name)(
             batch['observations'],
             batch['value_goals'],
             actions=actions,
@@ -37,11 +37,12 @@ class DNCEAgent(flax.struct.PyTreeNode):
             params=grad_params,
         )
         if len(phi.shape) == 3:  # Non-ensemble.
-            # logits = logits[None, ...]
+            logits = logits[None, ...]
             phi = phi[None, ...]
             psi = psi[None, ...]
 
-        logits = jnp.einsum('eitk,ejtk->ijte', phi, psi) / jnp.sqrt(phi.shape[-1])
+        # logits = jnp.einsum('eitk,ejtk->ijte', phi, psi) / jnp.sqrt(phi.shape[-1])
+        logits = jnp.einsum('eit->ite', logits)
 
         if self.config['binning_mode'] == 'time':
             labels_idxs = self.config['num_bins'] * (1 - self.config['discount']) * batch['value_goal_offsets'] / self.config['log_trunc']
@@ -51,7 +52,8 @@ class DNCEAgent(flax.struct.PyTreeNode):
         labels_idxs = jnp.floor(labels_idxs).astype(int)
         labels_idxs = labels_idxs.clip(0, self.config['num_bins'] - 1)
         
-        labels = jnp.zeros((batch_size, batch_size, self.config['num_bins'])).at[jnp.arange(batch_size), jnp.arange(batch_size), labels_idxs].set(1)
+        # labels = jnp.zeros((batch_size, batch_size, self.config['num_bins'])).at[jnp.arange(batch_size), jnp.arange(batch_size), labels_idxs].set(1)
+        labels = jnp.zeros((batch_size, self.config['num_bins'])).at[jnp.arange(batch_size), labels_idxs].set(1)
 
         critic_loss = jax.vmap(
             lambda _logits: optax.sigmoid_binary_cross_entropy(logits=_logits, labels=labels),
@@ -62,6 +64,7 @@ class DNCEAgent(flax.struct.PyTreeNode):
 
         # Compute additional statistics.        
         v = jnp.exp(v)
+        v_upper_tail_mean = jnp.exp(v_upper_tail_mean)
         logits = jnp.mean(logits, axis=-1)
         correct = jnp.argmax(logits, axis=-1) == jnp.argmax(labels, axis=-1)
         logits_pos = jnp.sum(logits * labels) / jnp.sum(labels)
@@ -77,6 +80,7 @@ class DNCEAgent(flax.struct.PyTreeNode):
             'logits_pos': logits_pos,
             'logits_neg': logits_neg,
             'logits': logits.mean(),
+            'v_upper_tail_mean_mean': v_upper_tail_mean.mean(),
         }
 
     def actor_loss(self, batch, grad_params, rng=None):
@@ -250,6 +254,7 @@ class DNCEAgent(flax.struct.PyTreeNode):
                 num_bins=config['num_bins'],
                 log_trunc=config['log_trunc'],
                 binning_mode=config['binning_mode'],
+                tail_quantile=config['tail_quantile'],
                 layer_norm=config['layer_norm'],
                 ensemble=True,
                 value_exp=False,
@@ -316,6 +321,7 @@ def get_config():
             num_bins=64,  # Number of bins for distance classifier.
             binning_mode='time',  # binning mode, 'time' for uniform time steps, 'discount' for uniform aggregate discount weights/geometric sampling probability.
             log_trunc=5,  # normalized log of catch all truncation time (for binning mode 'time')
+            tail_quantile=0.5,  # tail quantile for value upper tail mean
             layer_norm=True,  # Whether to use layer normalization.
             discount=0.99,  # Discount factor.
             actor_loss='ddpgbc',  # Actor loss type ('awr' or 'ddpgbc').
