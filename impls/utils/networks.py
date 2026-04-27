@@ -458,7 +458,7 @@ class GCDistanceClassifier(nn.Module):
             adjusted_discount = jnp.exp(- self.log_trunc / self.num_bins)
             bin_weights = (1 - adjusted_discount) / (1 - jnp.exp(-self.log_trunc)) * adjusted_discount ** jnp.arange(self.num_bins)
         elif self.binning_mode == 'discount':
-            bin_weights = jnp.ones(num_bins) / num_bins
+            bin_weights = jnp.ones(self.num_bins) / self.num_bins
 
         probs = jax.nn.sigmoid(logits)
 
